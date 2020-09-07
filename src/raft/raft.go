@@ -18,7 +18,6 @@ package raft
 //
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"time"
@@ -223,7 +222,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 // should call killed() to check whether it should stop.
 //
 func (rf *Raft) Kill() {
-	fmt.Printf("Killed: %d", rf.me)
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
 }
@@ -259,12 +257,12 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.lastVisitedTime = time.Now()
 	rf.timeOutPeriod = rand.Intn(TimeOutEndRange - TimeOutStartRange) + TimeOutStartRange
-	fmt.Printf("Server: %d has time out perioud: %d\n", rf.me, rf.timeOutPeriod)
+	//fmt.Printf("Server: %d has time out perioud: %d\n", rf.me, rf.timeOutPeriod)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	go BackgroundLeaderElectionActivationTrigger(rf)
-	go BackgroundHeartBeatSender(rf)
+	//go BackgroundHeartBeatSender(rf)rf
 	return rf
 }
 
@@ -274,8 +272,8 @@ func BackgroundLeaderElectionActivationTrigger(rf *Raft) {
 		rf.mu.Lock()
 		if (rf.curState != Leader && time.Now().Sub(rf.lastVisitedTime) > time.Duration(rf.timeOutPeriod)*  time.Millisecond) {
 			rf.mu.Unlock()
-			fmt.Printf("RealTime: %d Current Time: %d comparing against: %d\n", time.Now().Second(), time.Now().Sub(rf.lastVisitedTime), time.Duration(rf.timeOutPeriod)*  time.Millisecond)
-			fmt.Printf("Server: %d is starting leader election process\n", rf.me)
+			//fmt.Printf("RealTime: %d Current Time: %d comparing against: %d\n", time.Now().Second(), time.Now().Sub(rf.lastVisitedTime), time.Duration(rf.timeOutPeriod)*  time.Millisecond)
+			//fmt.Printf("Server: %d is starting leader election process\n", rf.me)
 			go StartElectionProcess(rf)
 		} else {
 			rf.mu.Unlock()
@@ -291,7 +289,8 @@ func BackgroundHeartBeatSender(rf *Raft) {
 	for (!rf.killed()){
 		rf.mu.Lock()
 		for (rf.curState != Leader) {
-			rf.leader_Cond.Wait()
+			rf.mu.Unlock()
+			return
 		}
 		//fmt.Printf("Server: %d sending heart beat\n", rf.me)
 
@@ -325,7 +324,7 @@ func SendHeartBeat(rf *Raft)  {
 
 func StartElectionProcess(rf *Raft)  {
 	rf.mu.Lock()
-	fmt.Printf("Server: %d is in leader election process\n", rf.me)
+	//fmt.Printf("Server: %d is in leader election process\n", rf.me)
 
 	rf.curState = Candidate
 	rf.currentTerm += 1
@@ -333,7 +332,7 @@ func StartElectionProcess(rf *Raft)  {
 	rf.lastVisitedTime = time.Now()
 	// reset random perioud at the start of election process
 	rf.timeOutPeriod = rand.Intn(TimeOutEndRange - TimeOutStartRange) + TimeOutStartRange
-	fmt.Printf("new timeout: %d\n", time.Duration(rf.timeOutPeriod) * time.Millisecond)
+	//fmt.Printf("new timeout: %d\n", time.Duration(rf.timeOutPeriod) * time.Millisecond)
 
 	rf.mu.Unlock()
 
@@ -355,35 +354,41 @@ func StartElectionProcess(rf *Raft)  {
 
 			if succeed && rf.curState == Candidate {
 				if reply.VoteGranted {
-					fmt.Printf("vote granted from server: %d\n", server_idx)
+					//fmt.Printf("vote granted from server: %d\n", server_idx)
 					count += 1
 				} else if (reply.Term > rf.currentTerm) {
-					fmt.Printf("Server: %d (Term: %d) abort leader election process because it recieves higer term %d", rf.me, rf.currentTerm, reply.Term)
+					//fmt.Printf("Server: %d (Term: %d) abort leader election process because it recieves higer term %d", rf.me, rf.currentTerm, reply.Term)
 					rf.curState = Follower
 					rf.currentTerm = reply.Term
+					rf.votedFor = -1
+				}
+
+				if (rf.curState == Candidate && count * 2 > len(rf.peers)) {
+					rf.curState = Leader
+					go BackgroundHeartBeatSender(rf)
 				}
 			}
 			wg.Done()
 		}(server_idx)
 	}
 
-	for {
-		rf.mu.Lock()
-		if  (count * 2 > len(rf.peers) || rf.curState != Candidate) {
-			break
-		}
-		rf.mu.Unlock()
-		time.Sleep(time.Duration(50) *  time.Millisecond) // magic numebr here, wait for an arbitaray time
-	}
-
-	// elected as leader
-	if (count * 2 > len(rf.peers)) {
-		fmt.Printf("Elected a leader: %d\n", rf.me)
-		rf.curState = Leader
-		rf.leader_Cond.Signal()
-	} else {
-		rf.curState = Follower
-	}
-	rf.mu.Unlock()
+	//for {
+	//	rf.mu.Lock()
+	//	if  (count * 2 > len(rf.peers) || rf.curState != Candidate) {
+	//		break
+	//	}
+	//	rf.mu.Unlock()
+	//	time.Sleep(time.Duration(50) *  time.Millisecond) // magic numebr here, wait for an arbitaray time
+	//}
+	//
+	//// elected as leader
+	//if (count * 2 > len(rf.peers)) {
+	//	fmt.Printf("Elected a leader: %d\n", rf.me)
+	//	rf.curState = Leader
+	//	rf.leader_Cond.Signal()
+	//} else {
+	//	rf.curState = Follower
+	//}
+	//rf.mu.Unlock()
 	wg.Wait()
 }

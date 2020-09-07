@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -37,10 +36,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
-	fmt.Printf("Recieved vote request from: %d", args.CandidateId)
+	//fmt.Printf("Recieved vote request from: %d", args.CandidateId)
 	if (args.Term < rf.currentTerm ||
 		(args.Term == rf.currentTerm && rf.votedFor != -1 && rf.votedFor != args.CandidateId) ||
-		rf.HasLaterLog(args.LastLogIndex, args.LastLogTerm)) {
+		(args.Term == rf.currentTerm && rf.HasLaterLog(args.LastLogIndex, args.LastLogTerm))) {
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
 	} else {

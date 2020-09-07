@@ -1,7 +1,6 @@
 package raft
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -29,7 +28,7 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	fmt.Printf("Server: %d (term: %d) recieved AppendEntry from Leader: %d (term: %d)\n", rf.me, rf.currentTerm, args.LeaderId, args.LeaderTerm)
+	//fmt.Printf("Server: %d (term: %d) recieved AppendEntry from Leader: %d (term: %d)\n", rf.me, rf.currentTerm, args.LeaderId, args.LeaderTerm)
 	if (args.LeaderTerm >= rf.currentTerm) {
 		rf.curState = Follower
 		rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
