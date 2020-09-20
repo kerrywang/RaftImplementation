@@ -233,7 +233,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	DPrintf("connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -256,7 +256,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	// fmt.Printf("disconnect(%d)\n", i)
+	DPrintf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
 
@@ -456,23 +456,26 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
 						// and it was the command we submitted.
 						return index
 					}
+					//cfg.t.Fatalf("one(%v) at index: %d missed match", cmd, index)
+
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
 			if retry == false {
-				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+				cfg.t.Fatalf("one(%v) at index: %d failed to reach agreement", cmd, index)
 			}
 		} else {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+	cfg.t.Fatalf("one(%v) failed to reach agreement (exceed 10 s)" , cmd)
 	return -1
 }
 

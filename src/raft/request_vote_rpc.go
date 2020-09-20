@@ -35,19 +35,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
-	//fmt.Printf("Recieved vote request from: %d", args.CandidateId)
+	DPrintf("Server: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d) Recieved vote request from: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d )\n", rf.me, rf.currentTerm, rf.getLastIndex(), rf.getLastTerm(), args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
 	if (args.Term < rf.currentTerm ||
 		(args.Term == rf.currentTerm && rf.votedFor != -1 && rf.votedFor != args.CandidateId) ||
-		(args.Term == rf.currentTerm && rf.HasLaterLog(args.LastLogIndex, args.LastLogTerm))) {
+		rf.HasLaterLog(args.LastLogIndex, args.LastLogTerm)) {
+		DPrintf("Server: %d Rejects the vote\n", rf.me)
 		reply.Term = rf.currentTerm
 		reply.VoteGranted = false
+		rf.currentTerm = MAX(rf.currentTerm, args.Term)
 	} else {
+		DPrintf("Server: %d Granted the vote\n", rf.me)
+
 		reply.VoteGranted = true
 		reply.Term = rf.currentTerm
 		rf.curState = Follower
 		rf.votedFor = args.CandidateId
 		rf.currentTerm = args.Term
+		rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
+
 	}
 }
 

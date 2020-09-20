@@ -17,7 +17,7 @@ type Master struct {
 //
 // an example RPC handler.
 //
-// the RPC argument and reply types are defined in rpc.go.
+// the RPC argument and reply types are defined in request_vote_rpc.go.
 //
 func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1

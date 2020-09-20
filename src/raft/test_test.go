@@ -8,8 +8,10 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
+import (
+	"fmt"
+	"testing"
+)
 import "time"
 import "math/rand"
 import "sync/atomic"
@@ -60,42 +62,42 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
-	//fmt.Printf("f the leader disconnects, a new one should be elected.")
+	//DPrintf("f the leader disconnects, a new one should be elected.")
 	cfg.disconnect(leader1)
-	//fmt.Printf("Disconnected current learder: %d\n", leader1)
+	//DPrintf("Disconnected current learder: %d\n", leader1)
 	cfg.checkOneLeader()
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
-	//fmt.Printf("if the old leader rejoins, that shouldn't disturb the new leader.\n")
+	//DPrintf("if the old leader rejoins, that shouldn't disturb the new leader.\n")
 
 	cfg.connect(leader1)
-	//fmt.Printf("Reconnect: %d\n", leader1)
+	//DPrintf("Reconnect: %d\n", leader1)
 
 	leader2 := cfg.checkOneLeader()
 
 	// if there's no quorum, no leader should
 	// be elected.
-	//fmt.Printf("f there's no quorum, no leader should be elected.\n")
+	//DPrintf("f there's no quorum, no leader should be elected.\n")
 
 	cfg.disconnect(leader2)
-	//fmt.Printf("Disconnect: %d\n", leader2)
+	//DPrintf("Disconnect: %d\n", leader2)
 
 	cfg.disconnect((leader2 + 1) % servers)
-	//fmt.Printf("Disconnect: %d\n", (leader2 + 1) % servers)
+	//DPrintf("Disconnect: %d\n", (leader2 + 1) % servers)
 
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
 
 	// if a quorum arises, it should elect a leader.
-	//fmt.Printf("if a quorum arises, it should elect a leader.\n")
+	//DPrintf("if a quorum arises, it should elect a leader.\n")
 
 	cfg.connect((leader2 + 1) % servers)
-	//fmt.Printf("Connect: %d\n", (leader2 + 1) % servers)
+	//DPrintf("Connect: %d\n", (leader2 + 1) % servers)
 	cfg.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
-	//fmt.Printf("re-join of last node shouldn't prevent leader from existing.\n")
+	//DPrintf("re-join of last node shouldn't prevent leader from existing.\n")
 
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
@@ -209,7 +211,6 @@ func TestFailNoAgree2B(t *testing.T) {
 	cfg.disconnect((leader + 1) % servers)
 	cfg.disconnect((leader + 2) % servers)
 	cfg.disconnect((leader + 3) % servers)
-
 	index, _, ok := cfg.rafts[leader].Start(20)
 	if ok != true {
 		t.Fatalf("leader rejected Start()")
@@ -374,7 +375,7 @@ func TestRejoin2B(t *testing.T) {
 
 	// old leader connected again
 	cfg.connect(leader1)
-
+	fmt.Printf("Reconnect Old Leader: %d\n", leader1)
 	cfg.one(104, 2, true)
 
 	// all together now
