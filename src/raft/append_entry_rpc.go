@@ -34,7 +34,7 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Server: %d (term: %d) recieved AppendEntry from Leader: %d (term: %d) With Applied Entry: %v\n", rf.me, rf.currentTerm, args.LeaderId, args.LeaderTerm, args.Entries)
+	DPrintf("Server: %d (term: %d) (Commited LogIDX: %d  LOG INDEX: %d Log Term: %d) recieved AppendEntry from Leader: %d (term: %d) (Commited LogIDX: %d, PrevIndex: %d  PrevTerm: %d) Entries: %d\n", rf.me, rf.currentTerm, rf.commitIndex, rf.getLastIndex(), rf.getLastTerm(), args.LeaderId, args.LeaderTerm, args.LeaderCommit, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
 
 	// if reply is not fit to be leader directly returns
 	if (args.LeaderTerm < rf.currentTerm) {
@@ -59,6 +59,7 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 	if (rf.getLastIndex() < args.PrevLogIndex) {
 		reply.Success = false
 		reply.NextIndex = rf.getLastIndex() + 1
+		rf.persist()
 		return
 	}
 	// Reply false if log entry has different term at pervLogIndex
@@ -72,6 +73,7 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 				break
 			}
 		}
+		rf.persist()
 		return
 	}
 
@@ -90,11 +92,13 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 		}
 
 		rf.commitIndex = i
-		DPrintf("Server: %v Commit_ID: %d Commited Entry: %v Last Term: %d\n", rf.me, rf.commitIndex, rf.logs[i].Command, rf.logs[i].Term)
+		DPrintf("Server: %v Commit_ID: %d Last Term: %d\n", rf.me, rf.commitIndex, rf.logs[i].Term)
 		//DPrintf("Server: %v Total Log: %v\n", rf.me, rf.logs)
 
 	}
 	DPrintf("Server: %v Last Term: %d", rf.me, rf.getLastTerm())
+	rf.persist()
+
 	//rf.logs = append(rf.logs, args.Entries...)
 	//DPrintf("Server: %d finisehd processing took Time: %d\n", rf.me, time.Now().Sub(rf.initializedTime).Milliseconds())
 

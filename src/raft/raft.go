@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"bytes"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -25,8 +27,7 @@ import (
 import "sync/atomic"
 import "../labrpc"
 
-// import "bytes"
-// import "../labgob"
+import "../labgob"
 
 type AppendEntryMode string
 const (
@@ -113,6 +114,7 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 func (rf *Raft) getLastIndex() int {
+	ASSERT_EQUAL(len(rf.logs) - 1, rf.logs[len(rf.logs) - 1].Pos)
 	return rf.logs[len(rf.logs) - 1].Pos
 }
 
@@ -147,6 +149,7 @@ func (rf *Raft) AssembleVoteRequest() (*RequestVoteArgs)  {
 	request_vote.CandidateId = rf.me
 	request_vote.LastLogIndex = curLogIndex
 
+	rf.persist()
 	return request_vote
 }
 
@@ -165,6 +168,8 @@ func (rf *Raft) AssembleAppendEntriesRequest(mode AppendEntryMode, server_id int
 	if (mode == AppendRequestMode) {
 		append_entry_request.Entries = rf.logs[rf.nextIndex[server_id]: ]
 	}
+
+	rf.persist()
 	return append_entry_request
 }
 
@@ -182,6 +187,14 @@ func (rf *Raft) persist() {
 	// e.Encode(rf.yyy)
 	// data := w.Bytes()
 	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 
@@ -205,6 +218,26 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.xxx = xxx
 	//   rf.yyy = yyy
 	// }
+	DPrintf("Reading From Persist")
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var logs []Log
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if d.Decode(&currentTerm) != nil ||
+		d.Decode(&votedFor) != nil ||
+		d.Decode(&logs) != nil {
+		log.Fatalf("%v, %v decode failed", time.Now(), rf.me)
+	} else {
+		rf.currentTerm = currentTerm
+		rf.votedFor = votedFor
+		rf.logs = logs
+		rf.nextIndex = make([]int, len(rf.peers))
+		rf.matchIndex = make([]int, len(rf.peers))
+	}
+
 }
 
 
@@ -372,6 +405,7 @@ func (rf *Raft) SendHeardBeatHelper(server_idx int) {
 	}
 }
 
+
 func (rf *Raft) SendAppendEntriesHelper(server_idx int) {
 	should_finish := false
 	mode := AppendRequestMode
@@ -379,6 +413,7 @@ func (rf *Raft) SendAppendEntriesHelper(server_idx int) {
 		reply := &AppendEntriesReply{}
 		request := rf.AssembleAppendEntriesRequest(mode, server_idx)
 
+		// make sure the request is still up-to-date. If the internal state changed restart the query
 		rf.mu.Lock()
 		if rf.currentTerm != request.LeaderTerm || rf.curState != Leader {
 			rf.mu.Unlock()
@@ -396,13 +431,18 @@ func (rf *Raft) SendAppendEntriesHelper(server_idx int) {
 			continue
 		}
 
+		if rf.currentTerm != request.LeaderTerm || rf.curState != Leader {
+			rf.mu.Unlock()
+			return
+		}
 
 		if rf.currentTerm < reply.Term {
 			rf.curState = Follower
 			rf.currentTerm = reply.Term
 			rf.votedFor = -1
+			rf.persist()
 		} else if (!reply.Success) {
-			rf.nextIndex[server_idx] = reply.NextIndex
+			rf.nextIndex[server_idx] =  reply.NextIndex
 		} else if (len(request.Entries) != 0) {
 			//DPrintf("Request Succeed Return from: %d", server_idx)
 
@@ -451,6 +491,7 @@ func StartElectionProcess(rf *Raft)  {
 	count := 1 // vote itself
 	var wg sync.WaitGroup
 
+	request := rf.AssembleVoteRequest()
 	for server_idx := 0; server_idx < len(rf.peers); server_idx++ {
 		if server_idx == rf.me {
 			continue
@@ -458,7 +499,6 @@ func StartElectionProcess(rf *Raft)  {
 		wg.Add(1)
 		go func(server_idx int) {
 			reply := &RequestVoteReply{}
-			request := rf.AssembleVoteRequest()
 
 			succeed := rf.sendRequestVote(server_idx, request, reply)
 			rf.mu.Lock()

@@ -54,6 +54,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
 
 	}
+	rf.persist()
 }
 
 //
