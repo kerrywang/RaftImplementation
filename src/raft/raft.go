@@ -62,6 +62,43 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+//(Updated on stable storage before responding to RPCs)
+type PersistenState struct {
+	// latest term server has seen (initialized to 0 on first boot, increases monotonically)
+	currentTerm int
+
+	// candidateId that received vote in current term (or -1 if none)
+	votedFor int
+
+	// log entries; each entry contains command for state machine, and term when entry  was received by leader (first index is 1)
+	logs   	[]Log
+}
+
+
+type VolatileStateAllServer struct {
+	// index of highest log entry known to be
+	// committed (initialized to 0, increases
+	// monotonically)
+	commitIndex int
+
+	//index of highest log entry applied to state
+	//machine (initialized to 0, increases
+	//monotonically)
+	lastApplied int
+}
+
+// (Reinitialized after election)
+type VolatileStateLeader struct {
+	// for each server, index of the next log entry
+	// to send to that server (initialized to leader
+	// last log index + 1)
+	nextIndex []int
+
+	// for each server, index of highest log entry
+	// known to be replicated on server
+	// (initialized to 0, increases monotonically)
+	matchIndex []int
+}
 //
 // A Go object implementing a single Raft peer.
 //
@@ -77,22 +114,13 @@ type Raft struct {
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
-	currentTerm int
-	votedFor int
-	logs   	[]Log
-	curState StateType
+	persitent_state PersistenState
 
-	lastVisitedTime time.Time
-	initializedTime time.Time
-	timeOutPeriod int
+	volatile_all_server VolatileStateAllServer
 
-	// volatile state:
-	commitIndex int
-	lastApplied int
+	volatile_leader VolatileStateLeader
 
-	// Volatile state on leaders:
-	nextIndex []int
-	matchIndex []int
+	cur_state StateType
 }
 
 type Log struct {
@@ -107,19 +135,26 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	var term int = rf.currentTerm
-	var isleader bool = rf.curState == Leader
+	var term int = rf.persitent_state.currentTerm
+	var isleader bool = rf.cur_state == Leader
 	// Your code here (2A).
 	return term, isleader
 }
 
+func (rf *Raft) maybeUpdateTerm(term int) {
+	if (term > rf.persitent_state.currentTerm) {
+		rf.persitent_state.currentTerm = term
+		rf.cur_state = Follower
+	}
+}
+
 func (rf *Raft) getLastIndex() int {
-	ASSERT_EQUAL(len(rf.logs) - 1, rf.logs[len(rf.logs) - 1].Pos)
-	return rf.logs[len(rf.logs) - 1].Pos
+	ASSERT_EQUAL(len(rf.persitent_state.logs) - 1, rf.persitent_state.logs[len(rf.persitent_state.logs) - 1].Pos)
+	return rf.persitent_state.logs[len(rf.persitent_state.logs) - 1].Pos
 }
 
 func (rf *Raft) getLastTerm() int {
-	return rf.logs[len(rf.logs) - 1].Term
+	return rf.persitent_state.logs[len(rf.persitent_state.logs) - 1].Term
 }
 
 func (rf *Raft) GetLogState() (int, int) {
@@ -145,7 +180,7 @@ func (rf *Raft) AssembleVoteRequest() (*RequestVoteArgs)  {
 
 
 	request_vote.LastLogTerm = curLogTerm
-	request_vote.Term = rf.currentTerm
+	request_vote.Term = rf.persitent_state.currentTerm
 	request_vote.CandidateId = rf.me
 	request_vote.LastLogIndex = curLogIndex
 
@@ -159,10 +194,10 @@ func (rf *Raft) AssembleAppendEntriesRequest(mode AppendEntryMode, server_id int
 
 	append_entry_request := &AppendEntriesArgs{}
 	append_entry_request.LeaderId = rf.me
-	append_entry_request.LeaderTerm = rf.currentTerm
-	append_entry_request.LeaderCommit = rf.commitIndex
-	append_entry_request.PrevLogIndex = rf.nextIndex[server_id] - 1
-	append_entry_request.PrevLogTerm = rf.logs[append_entry_request.PrevLogIndex].Term
+	append_entry_request.LeaderTerm = rf.persitent_state.currentTerm
+	append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
+	append_entry_request.PrevLogIndex = rf.volatile_leader.nextIndex[server_id] - 1
+	append_entry_request.PrevLogTerm = rf.persitent_state.logs[append_entry_request.PrevLogIndex].Term
 	//DPrintf("prev log term: %d has log: %v\n", append_entry_request.PrevLogTerm, rf.logs)
 
 	if (mode == AppendRequestMode) {
@@ -336,6 +371,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		Pos:     0,
 	}}
 
+	rf.lastApplied = 0
+	rf.commitIndex = 0
+
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 
@@ -347,6 +385,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.readPersist(persister.ReadRaftState())
 
 	go BackgroundLeaderElectionActivationTrigger(rf)
+	go rf.SendAppliedMsg()
 	//go BackgroundHeartBeatSender(rf)rf
 	return rf
 }
@@ -405,6 +444,35 @@ func (rf *Raft) SendHeardBeatHelper(server_idx int) {
 	}
 }
 
+func (rf *Raft) SendAppliedMsg() {
+	for !rf.killed() {
+		rf.mu.Lock()
+		if rf.commitIndex == rf.lastApplied {
+			rf.mu.Unlock()
+			time.Sleep(time.Duration(50) * time.Millisecond)
+			continue
+		}
+		cur_commitIndex := rf.commitIndex
+		cur_lastApplied := rf.lastApplied
+		rf.mu.Unlock()
+
+		for cur_lastApplied < cur_commitIndex {
+			rf.apply_chan <- ApplyMsg{
+				CommandValid: true,
+				Command:      rf.logs[cur_lastApplied].Command,
+				CommandIndex: rf.logs[cur_lastApplied].Pos,
+			}
+			cur_lastApplied++
+			//}
+			DPrintf("Server: %v  [LEADER] Commit_ID: %d\n", rf.me, rf.commitIndex)
+		}
+
+		rf.mu.Lock()
+		rf.lastApplied = cur_lastApplied
+		rf.mu.Unlock()
+	}
+}
+
 
 func (rf *Raft) SendAppendEntriesHelper(server_idx int) {
 	should_finish := false
@@ -455,6 +523,10 @@ func (rf *Raft) SendAppendEntriesHelper(server_idx int) {
 
 	}
 }
+
+//func (rf * Raft) BackGroundApplyMsg() {
+//
+//}
 
 func SendAppendEntries(rf *Raft, mode AppendEntryMode)  {
 

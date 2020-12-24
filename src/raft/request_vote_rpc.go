@@ -12,7 +12,11 @@ type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 	Term int
 	CandidateId int
+
+	//term of candidate’s last log entry (§5.4)
 	LastLogTerm int
+
+	//index of candidate’s last log entry
 	LastLogIndex int
 }
 
@@ -36,24 +40,30 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	defer rf.mu.Unlock()
 
 	DPrintf("Server: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d) Recieved vote request from: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d )\n", rf.me, rf.currentTerm, rf.getLastIndex(), rf.getLastTerm(), args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
-	if (args.Term < rf.currentTerm ||
-		(args.Term == rf.currentTerm && rf.votedFor != -1 && rf.votedFor != args.CandidateId) ||
-		rf.HasLaterLog(args.LastLogIndex, args.LastLogTerm)) {
+	if (args.Term < rf.persitent_state.currentTerm ) {
 		DPrintf("Server: %d Rejects the vote\n", rf.me)
-		reply.Term = rf.currentTerm
+		reply.Term = rf.persitent_state.currentTerm
 		reply.VoteGranted = false
-		rf.currentTerm = MAX(rf.currentTerm, args.Term)
-	} else {
+	} else if ( (rf.persitent_state.votedFor == -1 || rf.persitent_state.votedFor == args.CandidateId) &&
+				(args.LastLogIndex >= rf.getLastIndex() && args.LastLogTerm >= rf.getLastTerm())) {
+		//If votedFor is null or candidateId, and candidate’s log is at
+		//least as up-to-date as receiver’s log, grant vote
+
 		DPrintf("Server: %d Granted the vote\n", rf.me)
 
 		reply.VoteGranted = true
-		reply.Term = rf.currentTerm
-		rf.curState = Follower
-		rf.votedFor = args.CandidateId
-		rf.currentTerm = args.Term
-		rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
+		reply.Term = rf.persitent_state.currentTerm
+		//rf.curState = Follower
+		//rf.votedFor = args.CandidateId
+		//rf.currentTerm = args.Term
+		//rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
 
+	} else {
+		reply.Term = rf.persitent_state.currentTerm
+		reply.VoteGranted = false
 	}
+
+	rf.maybeUpdateTerm(args.Term)
 	rf.persist()
 }
 
