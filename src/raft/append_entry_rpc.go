@@ -1,7 +1,7 @@
 package raft
 
 import (
-	//"time"
+	"time"
 )
 
 /* Invoked by leader to replicate log entries; Also used as heartbeat */
@@ -21,6 +21,37 @@ type AppendEntriesArgs struct {
 type AppendEntriesReply struct {
 	Term int
 	Success bool
+
+	// TODO: Implement next index optimization
+	NextIndex int
+}
+
+func (rf *Raft) AppendEntryRequestSnapshot() (*AppendEntriesArgs) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	append_entry_request := &AppendEntriesArgs{}
+	append_entry_request.LeaderId = rf.me
+	append_entry_request.LeaderTerm = rf.persitent_state.currentTerm
+	append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
+	return append_entry_request
+}
+
+func (rf *Raft) AssembleAppendEntriesRequest(server_id int, snapshot_args *AppendEntriesArgs) (*AppendEntriesArgs)  {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	DPrintf("Sever: %v Is Assembling messages to %d\n", rf.me, server_id)
+
+	append_entry_request := &AppendEntriesArgs{}
+	append_entry_request.LeaderId = snapshot_args.LeaderId
+	append_entry_request.LeaderTerm = snapshot_args.LeaderTerm
+	append_entry_request.LeaderCommit = snapshot_args.LeaderCommit
+	append_entry_request.PrevLogIndex = rf.volatile_leader.nextIndex[server_id]
+	append_entry_request.PrevLogTerm = rf.persitent_state.logs[append_entry_request.PrevLogIndex].Term
+	append_entry_request.Entries = rf.persitent_state.logs[rf.volatile_leader.nextIndex[server_id]:]
+
+	rf.persist()
+	return append_entry_request
 }
 
 
@@ -29,36 +60,52 @@ func (rf *Raft) sendAppendEntryRequest(server int, args *AppendEntriesArgs, repl
 	return ok
 }
 
+func (rf *Raft) FindFirstIndexForTerm(term int) int {
+	for i:= 0; i <= rf.getLastIndex(); i++ {
+		if rf.persitent_state.logs[i].Term == term {
+			return i
+		}
+	}
+	return rf.getLastIndex()
+}
+
 func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	// Your code here (2A, 2B).
 	// case where we don't grant the vote
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Server: %d (term: %d) (Commited LogIDX: %d  LOG INDEX: %d Log Term: %d) recieved AppendEntry from Leader: %d (term: %d) (Commited LogIDX: %d, PrevIndex: %d  PrevTerm: %d) Entries: %d\n", rf.me, rf.currentTerm, rf.commitIndex, rf.getLastIndex(), rf.getLastTerm(), args.LeaderId, args.LeaderTerm, args.LeaderCommit, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
+	DPrintf("Server: %d (term: %d) (Commited LogIDX: %d  LOG INDEX: %d Log Term: %d) recieved AppendEntry from Leader: %d (term: %d) (Commited LogIDX: %d, PrevIndex: %d  PrevTerm: %d) Entries: %d\n", rf.me, rf.persitent_state.currentTerm, rf.volatile_all_server.commitIndex, rf.getLastIndex(), rf.getLastTerm(), args.LeaderId, args.LeaderTerm, args.LeaderCommit, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
+
+	rf.maybeUpdateTerm(args.LeaderTerm)
 
 	//  Reply false if term < currentTerm (§5.1)
 	if (args.LeaderTerm < rf.persitent_state.currentTerm) {
 		reply.Term = rf.persitent_state.currentTerm
 		reply.Success = false
-		//rf.persitent_state.votedFor = -1
 		DPrintf("Append Entry Faild due to Leader Term Smaller than current Term")
 
-		rf.maybeUpdateTerm(args.LeaderTerm)
 		return
 	}
+
+	rf.last_synced_time = time.Now() // this server is visited by a leader or candidate. Update this
+
 
 	//Reply false if log doesn’t contain an entry at prevLogIndex
 	//whose term matches prevLogTerm (§5.3)
 	if (rf.getLastIndex() < args.PrevLogIndex || rf.persitent_state.logs[args.PrevLogIndex].Term != args.PrevLogTerm) {
 		reply.Term = rf.persitent_state.currentTerm
 		reply.Success = false
+		if rf.getLastIndex() < args.PrevLogIndex {
+			reply.NextIndex = rf.getLastIndex()
+		} else {
+			reply.NextIndex = rf.FindFirstIndexForTerm(rf.persitent_state.logs[args.PrevLogIndex].Term)
+		}
 		//rf.persitent_state.votedFor = -1
+
 		DPrintf("Append Entry Faild due to no matching log")
-		rf.maybeUpdateTerm(args.LeaderTerm)
 		return
 	}
-
 
 	// If an existing entry conflicts with a new one (same index
 	// but different terms), delete the existing entry and all that
@@ -88,71 +135,4 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 
 	DPrintf("Finished Append: Server: %v Last Term: %d", rf.me, rf.getLastTerm())
 	rf.persist()
-	rf.maybeUpdateTerm(args.LeaderTerm)
-
-	//// update current status because it is leader sending message
-	////if (args.LeaderTerm >= rf.currentTerm) {
-	//rf.curState = Follower
-	//rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
-	//
-	////DPrintf("Server: %d updates its Last Visited Time: %d\n", rf.me, rf.lastVisitedTime .Sub(rf.initializedTime).Milliseconds())
-	//reply.Term = rf.currentTerm
-	//rf.currentTerm = args.LeaderTerm
-	//
-	//
-	////  Reply false if log doesn’t contain an entry at prevLogIndex
-	////if (rf.getLastIndex() < args.PrevLogIndex) {
-	////	reply.Success = false
-	////	reply.NextIndex = rf.getLastIndex() + 1
-	////	rf.persist()
-	////	return
-	////}
-	//// Reply false if log entry has different term at pervLogIndex
-	//if (rf.getLastIndex() < args.PrevLogIndex || rf.logs[args.PrevLogIndex].Term != args.PrevLogTerm) {
-	//	reply.Success = false
-	//
-	//	// apply fast log back off
-	//	for i := MIN(rf.getLastIndex(), args.PrevLogIndex - 1); i >= 0; i-- {
-	//		if (rf.logs[i].Term != args.PrevLogTerm) {
-	//			reply.NextIndex = i + 1
-	//			break
-	//		}
-	//	}
-	//	rf.persist()
-	//	DPrintf("Append Entry Faild due to mismatched data")
-	//	return
-	//}
-	//
-	//// Successful case
-	//reply.Success = true
-	//for i := 0; i < len(args.Entries); i++ {
-	//	iter_in_log := i + args.PrevLogIndex + 1
-	//	if (len(rf.logs) <= iter_in_log) {
-	//		rf.logs = append(rf.logs, args.Entries[i])
-	//	} else if (rf.logs[iter_in_log].Term != args.Entries[i].Term || rf.logs[iter_in_log].Pos != args.Entries[i].Pos) {
-	//		rf.logs = rf.logs[:iter_in_log]
-	//		rf.logs = append(rf.logs, args.Entries[i])
-	//	}
-	//}
-	//
-	//reply.NextIndex = rf.getLastIndex() + 1
-	//
-	////startCommitIndex := rf.commitIndex + 1
-	////for i := startCommitIndex; i <= MIN(args.PrevLogIndex + len(args.Entries), args.LeaderCommit); i++ {
-	////	rf.apply_chan <- ApplyMsg{
-	////		CommandValid: true,
-	////		Command:      rf.logs[i].Command,
-	////		CommandIndex: i,
-	////	}
-	////
-	////	rf.commitIndex = i
-	////	DPrintf("Server: %v Commit_ID: %d Last Term: %d\n", rf.me, rf.commitIndex, rf.logs[i].Term)
-	////	//DPrintf("Server: %v Total Log: %v\n", rf.me, rf.logs)
-	////
-	////}
-
-
-	//rf.logs = append(rf.logs, args.Entries...)
-	//DPrintf("Server: %d finisehd processing took Time: %d\n", rf.me, time.Now().Sub(rf.initializedTime).Milliseconds())
-
 }

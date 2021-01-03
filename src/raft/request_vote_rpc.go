@@ -30,6 +30,24 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
+func (rf *Raft) AssembleVoteRequest() (*RequestVoteArgs)  {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	request_vote := &RequestVoteArgs{}
+	curLogIndex, curLogTerm  := rf.GetLogState()
+
+
+	request_vote.LastLogTerm = curLogTerm
+	request_vote.Term = rf.persitent_state.currentTerm
+	request_vote.CandidateId = rf.me
+	request_vote.LastLogIndex = curLogIndex
+
+	rf.persist()
+	return request_vote
+}
+
+
 //
 // example RequestVote RPC handler.
 //
@@ -38,32 +56,30 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// case where we don't grant the vote
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-
-	DPrintf("Server: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d) Recieved vote request from: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d )\n", rf.me, rf.currentTerm, rf.getLastIndex(), rf.getLastTerm(), args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
-	if (args.Term < rf.persitent_state.currentTerm ) {
-		DPrintf("Server: %d Rejects the vote\n", rf.me)
-		reply.Term = rf.persitent_state.currentTerm
-		reply.VoteGranted = false
-	} else if ( (rf.persitent_state.votedFor == -1 || rf.persitent_state.votedFor == args.CandidateId) &&
-				(args.LastLogIndex >= rf.getLastIndex() && args.LastLogTerm >= rf.getLastTerm())) {
-		//If votedFor is null or candidateId, and candidate’s log is at
-		//least as up-to-date as receiver’s log, grant vote
-
-		DPrintf("Server: %d Granted the vote\n", rf.me)
-
-		reply.VoteGranted = true
-		reply.Term = rf.persitent_state.currentTerm
-		//rf.curState = Follower
-		//rf.votedFor = args.CandidateId
-		//rf.currentTerm = args.Term
-		//rf.lastVisitedTime = time.Now() // this server is visited by a leader or candidate. Update this
-
-	} else {
-		reply.Term = rf.persitent_state.currentTerm
-		reply.VoteGranted = false
-	}
-
 	rf.maybeUpdateTerm(args.Term)
+
+	DPrintf("Server: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d) Recieved vote request from: %d (TERM: %d, LOG_IDX: %d Last_Log_Term: %d )\n", rf.me, rf.persitent_state.currentTerm, rf.getLastIndex(), rf.getLastTerm(), args.CandidateId, args.Term, args.LastLogIndex, args.LastLogTerm)
+	//If votedFor is null or candidateId, and candidate’s log is at
+	//least as up-to-date as receiver’s log, grant vote
+	if rf.persitent_state.votedFor == -1 || rf.persitent_state.votedFor == args.CandidateId {
+		// If the logs have last entries with different terms, then
+		//the log with the later term is more up-to-date. If the logs
+		//end with the same term, then whichever log is longer is
+		//more up-to-date.
+		if args.LastLogTerm > rf.getLastTerm() || (args.LastLogTerm == rf.getLastTerm() && args.LastLogIndex >= rf.getLastIndex()) {
+			DPrintf("Server: %d Granted the vote\n", rf.me)
+
+			reply.VoteGranted = true
+			rf.last_synced_time = time.Now() // this server is visited by a leader or candidate. Update this
+			reply.Term = rf.persitent_state.currentTerm
+			rf.persitent_state.votedFor = args.CandidateId
+			rf.persist()
+			return
+		}
+	}
+	reply.Term = rf.persitent_state.currentTerm
+	reply.VoteGranted = false
+	DPrintf("Server: %d Rejected the vote\n", rf.me)
 	rf.persist()
 }
 
