@@ -39,7 +39,7 @@ const (
 
 const TimeOutStartRange = 600
 const TimeOutEndRange = 1500
-const HeartBeatInterval = 100
+const HeartBeatInterval = 150
 //
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
@@ -146,6 +146,7 @@ func (rf *Raft) maybeUpdateTerm(term int) {
 		rf.persitent_state.currentTerm = term
 		rf.cur_state = Follower
 		rf.persitent_state.votedFor = -1
+		rf.persist()
 	}
 }
 
@@ -256,11 +257,11 @@ func (rf *Raft) readPersist(data []byte) {
 //
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
 	term := rf.persitent_state.currentTerm
 	isLeader := rf.cur_state == Leader
 	if (!isLeader) {
+		rf.mu.Unlock()
 		return -1, -1, isLeader
 	}
 
@@ -276,6 +277,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.volatile_leader.matchIndex[rf.me] = lastIndex
 	rf.volatile_leader.nextIndex[rf.me] = lastIndex + 1
 	//DPrintf("Leader: %d Received New Entry. Current Log: %v", rf.me, rf.logs)
+	rf.persist()
+	rf.mu.Unlock()
+
 	go rf.SendAppendEntries()
 
 	return lastIndex, term, isLeader
@@ -384,6 +388,7 @@ func (rf *Raft) BackgroundAppendEntries() {
 		//DPrintf("Server: %d sending heart beat\n", rf.me)
 
 		rf.mu.Unlock()
+
 		go rf.SendAppendEntries()
 		time.Sleep(time.Duration(HeartBeatInterval) * time.Millisecond)
 	}
@@ -444,7 +449,7 @@ func (rf *Raft) SendAppliedMsg() {
 }
 
 
-func (rf *Raft) SendAppendEntriesHelper(server_idx int, request *AppendEntriesArgs) {
+func (rf *Raft)  SendAppendEntriesHelper(server_idx int, request *AppendEntriesArgs) {
 	reply := &AppendEntriesReply{}
 	succeed := rf.sendAppendEntryRequest(server_idx, request, reply)
 
@@ -464,26 +469,23 @@ func (rf *Raft) SendAppendEntriesHelper(server_idx int, request *AppendEntriesAr
 				rf.UpdateCommit()
 			} else {
 				// TODO: Implement optimization
-				rf.volatile_leader.nextIndex[server_idx] = request.PrevLogIndex - 1
+				rf.volatile_leader.nextIndex[server_idx] = reply.NextIndex
+
 			}
 		}
 	}
 
 }
 
-//func (rf * Raft) BackGroundApplyMsg() {
-//
-//}
-
 func (rf* Raft) SendAppendEntries()  {
 	state_snapshot := rf.AppendEntryRequestSnapshot()
 	for server_idx := 0; server_idx < len(rf.peers); server_idx++ {
-		//if server_idx == rf.me {
-		//	continue
-		//}
+		if server_idx == rf.me {
+			continue
+		}
 		request := rf.AssembleAppendEntriesRequest(server_idx, state_snapshot)
 
-		rf.SendAppendEntriesHelper(server_idx, request)
+		go rf.SendAppendEntriesHelper(server_idx, request)
 	}
 }
 
@@ -498,7 +500,7 @@ func StartElectionProcess(rf *Raft)  {
 	// reset random perioud at the start of election process
 	rf.time_out_period = rand.Intn(TimeOutEndRange - TimeOutStartRange) + TimeOutStartRange
 	//DPrintf("new timeout: %d\n", time.Duration(rf.timeOutPeriod) * time.Millisecond)
-
+	rf.persist()
 	rf.mu.Unlock()
 
 	count := 1 // vote itself
@@ -534,7 +536,7 @@ func StartElectionProcess(rf *Raft)  {
 					DPrintf("Elected New Leader: %d\n", rf.me)
 					rf.volatile_leader.matchIndex = INITIALIZE(len(rf.peers), 0)
 					rf.volatile_leader.nextIndex = INITIALIZE(len(rf.peers), rf.getLastIndex() + 1)
-
+					rf.volatile_leader.matchIndex[rf.me] = rf.getLastIndex()
 					go rf.BackgroundAppendEntries()
 				}
 			}

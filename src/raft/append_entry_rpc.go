@@ -29,24 +29,26 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntryRequestSnapshot() (*AppendEntriesArgs) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	DPrintf("Append Entry Snapshot has Commit ID: %d\n", rf.volatile_all_server.commitIndex)
 
 	append_entry_request := &AppendEntriesArgs{}
 	append_entry_request.LeaderId = rf.me
 	append_entry_request.LeaderTerm = rf.persitent_state.currentTerm
-	append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
+	//append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
 	return append_entry_request
 }
 
 func (rf *Raft) AssembleAppendEntriesRequest(server_id int, snapshot_args *AppendEntriesArgs) (*AppendEntriesArgs)  {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("Sever: %v Is Assembling messages to %d\n", rf.me, server_id)
+	//DPrintf("Sever: %v Is Assembling messages to %d\n", rf.me, server_id)
 
 	append_entry_request := &AppendEntriesArgs{}
 	append_entry_request.LeaderId = snapshot_args.LeaderId
 	append_entry_request.LeaderTerm = snapshot_args.LeaderTerm
-	append_entry_request.LeaderCommit = snapshot_args.LeaderCommit
-	append_entry_request.PrevLogIndex = rf.volatile_leader.nextIndex[server_id]
+	append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
+	append_entry_request.PrevLogIndex = rf.volatile_leader.nextIndex[server_id] - 1
+
 	append_entry_request.PrevLogTerm = rf.persitent_state.logs[append_entry_request.PrevLogIndex].Term
 	append_entry_request.Entries = rf.persitent_state.logs[rf.volatile_leader.nextIndex[server_id]:]
 
@@ -76,7 +78,7 @@ func (rf *Raft) AppendEntry(args *AppendEntriesArgs, reply *AppendEntriesReply) 
 	defer rf.mu.Unlock()
 
 	DPrintf("Server: %d (term: %d) (Commited LogIDX: %d  LOG INDEX: %d Log Term: %d) recieved AppendEntry from Leader: %d (term: %d) (Commited LogIDX: %d, PrevIndex: %d  PrevTerm: %d) Entries: %d\n", rf.me, rf.persitent_state.currentTerm, rf.volatile_all_server.commitIndex, rf.getLastIndex(), rf.getLastTerm(), args.LeaderId, args.LeaderTerm, args.LeaderCommit, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries))
-
+	DPrintf("Server: %d has log: %v, Incomming Log: %v\n", rf.me, rf.persitent_state.logs, args.Entries)
 	rf.maybeUpdateTerm(args.LeaderTerm)
 
 	//  Reply false if term < currentTerm (§5.1)
