@@ -11,6 +11,13 @@ import (
 
 const Debug = 0
 
+type OpsType string
+const (
+	Put OpsType = "Put"
+	Get = "Get"
+	Append = "Append"
+)
+
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
 		log.Printf(format, a...)
@@ -23,6 +30,9 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	OpType OpsType
+	Key string
+	Value string
 }
 
 type KVServer struct {
@@ -35,11 +45,61 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	kv_store map[string]string
 }
 
+func (kv *KVServer) ApplyOps(message interface{}) string{
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	op_message := message.(Op)
+	switch op_message.OpType {
+	case Put:
+		kv.kv_store[op_message.Key] = op_message.Value
+	case Append:
+		v, exist := kv.kv_store[op_message.Key]
+		if exist {
+			kv.kv_store[op_message.Key] = v + op_message.Value
+		} else {
+			kv.kv_store[op_message.Key] = op_message.Value
+		}
+	case Get:
+		v, exist := kv.kv_store[op_message.Key]
+		if exist {
+			return v
+		}
+	}
+	return ""
+}
+
+func (kv *KVServer) ApplyChanListener() {
+	message := <-kv.applyCh
+	if message.CommandValid {
+		reply := kv.ApplyOps(message)
+
+	}
+}
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	op_to_send := Op{
+		OpType: Get,
+		Key:    args.Key,
+	}
+
+	index, term, isLeader := kv.rf.Start(op_to_send)
+	if (!isLeader) {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	kv.mu.Lock()
+
+
+
+
+
+
 }
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -94,7 +154,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-
 	// You may need initialization code here.
 
 	return kv
