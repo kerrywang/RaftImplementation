@@ -47,7 +47,7 @@ func (rf *Raft) AssembleAppendEntriesRequest(server_id int, snapshot_args *Appen
 	append_entry_request.LeaderId = snapshot_args.LeaderId
 	append_entry_request.LeaderTerm = snapshot_args.LeaderTerm
 	append_entry_request.LeaderCommit = rf.volatile_all_server.commitIndex
-	append_entry_request.PrevLogIndex = rf.volatile_leader.nextIndex[server_id] - 1
+	append_entry_request.PrevLogIndex = MAX(0, rf.volatile_leader.nextIndex[server_id] - 1)
 
 	append_entry_request.PrevLogTerm = rf.persitent_state.logs[append_entry_request.PrevLogIndex].Term
 	append_entry_request.Entries = rf.persitent_state.logs[rf.volatile_leader.nextIndex[server_id]:]
